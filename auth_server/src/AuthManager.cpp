@@ -101,7 +101,7 @@ bool AuthManager::isUserRegistered(const string& username) {
         }
 
         vector<string> params = {username};
-        pqxx::result res = db_manager->executeParamQuery("SELECT COUNT 1 FROM users WHERE username = $1", params);
+        pqxx::result res = db_manager->executeParamQuery("SELECT COUNT(1) FROM users WHERE username = $1", params);
 
         if (!res.empty() && res[0][0].as<int>() > 0) {
             return true;

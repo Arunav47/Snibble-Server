@@ -45,10 +45,9 @@ int main() {
         
         if (authManager.isUserRegistered(username)) {
             if (authManager.login(username, password)) {
-                // Create JWT token
+
                 string token = createJWTToken(username, JWT_SECRET);
                 
-                // Return token in response
                 crow::json::wvalue response;
                 response["message"] = "Login successful";
                 response["token"] = token;
@@ -81,9 +80,7 @@ int main() {
         }
     });
 
-    // Search users endpoint
     CROW_ROUTE(app, "/search").methods(crow::HTTPMethod::GET)([&authManager](const crow::request& req) {
-        // Get search query from URL parameter
         auto query = req.url_params.get("q");
         if (!query) {
             return crow::response(400, "Missing search query parameter 'q'");
@@ -132,7 +129,7 @@ int main() {
         }
     });
 
-    // Get public key endpoint
+
     CROW_ROUTE(app, "/get_public_key").methods(crow::HTTPMethod::POST)([&authManager](const crow::request& req) {
         auto json = crow::json::load(req.body);
         if (!json) {
@@ -151,6 +148,73 @@ int main() {
         } else {
             return crow::response(404, "Public key not found for user");
         }
+    });
+
+    CROW_ROUTE(app, "/verify-token").methods(crow::HTTPMethod::POST)([&JWT_SECRET](const crow::request& req) {
+        string authHeader = req.get_header_value("Authorization");
+        if (authHeader.empty()) {
+            return crow::response(401, "Missing Authorization header");
+        }
+
+        const string bearerPrefix = "Bearer ";
+        if (authHeader.find(bearerPrefix) != 0) {
+            return crow::response(401, "Invalid Authorization header format");
+        }
+
+        string token = authHeader.substr(bearerPrefix.length());
+        if (token.empty()) {
+            return crow::response(401, "Missing token");
+        }
+
+        try {
+            auto decoded = jwt::decode(token);
+
+            auto verifier = jwt::verify()
+                .allow_algorithm(jwt::algorithm::hs256{JWT_SECRET})
+                .with_type("JWT")
+                .with_issuer("snibble-auth")
+                .leeway(60UL);
+
+            verifier.verify(decoded);
+
+            auto now = std::chrono::system_clock::now();
+            auto exp = decoded.get_expires_at();
+            if (exp < now) {
+                return crow::response(401, "Token has expired");
+            }
+
+            string username;
+            if (decoded.has_payload_claim("username")) {
+                username = decoded.get_payload_claim("username").as_string();
+            } else {
+                return crow::response(401, "Invalid token payload");
+            }
+
+            crow::json::wvalue response;
+            response["valid"] = true;
+            response["username"] = username;
+            response["message"] = "Token is valid";
+
+            return crow::response(200, response);
+
+        } catch (const jwt::error::signature_verification_exception& e) {
+            return crow::response(401, "Token signature verification failed");
+        } catch (const jwt::error::token_verification_exception& e) {
+            return crow::response(401, "Token verification failed");
+        } catch (const std::exception& e) {
+            return crow::response(401, "Token verification error: " + string(e.what()));
+        }
+    });
+
+    // Logout endpoint (optional - can be used to invalidate sessions)
+    CROW_ROUTE(app, "/logout").methods(crow::HTTPMethod::POST)([](const crow::request& req) {
+        // In a stateless JWT system, logout is typically handled client-side
+        // by removing the token. However, for better security, you could maintain
+        // a blacklist of tokens or use refresh tokens.
+        
+        crow::json::wvalue response;
+        response["message"] = "Logout successful";
+        return crow::response(200, response);
     });
 
     app.port(port).multithreaded().bindaddr("127.0.0.1").run();

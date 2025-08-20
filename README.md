@@ -14,11 +14,9 @@ The server is composed of:
 ### System Requirements
 - C++20 compatible compiler (GCC 10+ or Clang 12+)
 - CMake 3.16 or higher
-- PostgreSQL 12+ database
 - Redis server (for user presence tracking)
 
 ### Required Dependencies
-- **libpqxx**: PostgreSQL C++ library
 - **hiredis**: Redis C client library
 - **Crow**: C++ web framework (for auth server)
 - **jwt-cpp**: JWT token handling
@@ -34,15 +32,15 @@ The server is composed of:
 ```bash
 sudo apt update
 sudo apt install build-essential cmake pkg-config
-sudo apt install libpqxx-dev libhiredis-dev libssl-dev libsodium-dev
-sudo apt install postgresql postgresql-contrib redis-server
+sudo apt install libhiredis-dev libssl-dev libsodium-dev
+sudo apt install redis-server
 ```
 
 #### Fedora/RHEL:
 ```bash
 sudo dnf install gcc-c++ cmake pkgconfig
-sudo dnf install libpqxx-devel hiredis-devel openssl-devel libsodium-devel
-sudo dnf install postgresql postgresql-server redis
+sudo dnf install libhiredis-devel openssl-devel libsodium-devel
+sudo dnf install redis
 ```
 
 ### 2. Install Additional Dependencies
@@ -54,7 +52,18 @@ Refer to [`../INSTALL_DEPENDENCIES.md`](../INSTALL_DEPENDENCIES.md) for detailed
 
 ### 3. Database Setup
 
-#### PostgreSQL Setup:
+#### Azure SQL Setup:
+```bash
+# Create Azure SQL server and database
+az sql server create --name servername --resource-group your_resource_group --location your_location --admin-user your_admin_user --admin-password your_admin_password
+az sql db create --resource-group your_resource_group --server servername --name snibble_users_db --service-objective S0
+az sql db create --resource-group your_resource_group --server servername --name snibble_chat_db --service-objective S0
+
+# Configure firewall rules to allow access
+az sql server firewall-rule create --resource-group your_resource_group --server servername --name AllowYourIP --start-ip-address your_ip_address --end-ip-address your_ip_address
+```
+
+<!-- #### PostgreSQL Setup:
 ```bash
 # Start PostgreSQL service
 sudo systemctl start postgresql
@@ -67,7 +76,7 @@ sudo -u postgres psql -c "ALTER USER snibble_db_admin PASSWORD 'your_password';"
 # Create databases
 sudo -u postgres createdb snibble_users_db -O snibble_db_admin
 sudo -u postgres createdb snibble_chat_db -O snibble_db_admin
-```
+``` -->
 
 #### Redis Setup:
 ```bash
@@ -85,7 +94,10 @@ Both servers require environment configuration files that are **not tracked in g
 #### Auth Server Configuration
 Create `auth_server/.env`:
 ```bash
-DB_PATH="dbname=snibble_users_db user=snibble_db_admin password=your_password host=localhost port=5432"
+AZURE_SQL_SERVER="your_azure_sql_server"
+AZURE_SQL_DATABASE="snibble_users_db"
+AZURE_SQL_USERNAME="snibble_db_admin"
+AZURE_SQL_PASSWORD="your_password"
 VERBOSE="false"
 PORT=8000
 AUTH_HOST="http://127.0.0.1"
@@ -100,7 +112,10 @@ Create `chat_server/.env`:
 ```bash
 SOCKET_HOST="127.0.0.1"
 SOCKET_PORT=8080
-DB_PATH="dbname=snibble_chat_db user=snibble_db_admin password=your_password host=localhost port=5432"
+AZURE_SQL_SERVER="your_azure_sql_server"
+AZURE_SQL_DATABASE="snibble_chat_db"
+AZURE_SQL_USERNAME="snibble_db_admin"
+AZURE_SQL_PASSWORD="your_password"
 VERBOSE="false"
 ```
 

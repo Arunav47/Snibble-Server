@@ -10,8 +10,8 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-# Find libpqxx (PostgreSQL C++ library)
-pkg_check_modules(PQXX REQUIRED libpqxx)
+# Find ODBC for SQL Server connectivity
+find_package(ODBC REQUIRED)
 
 # Find crow framework
 find_package(Crow REQUIRED)
@@ -31,7 +31,7 @@ endif()
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../shared/include)
 include_directories(${SODIUM_INCLUDE_DIRS})
-include_directories(${PQXX_INCLUDE_DIRS})
+include_directories(${ODBC_INCLUDE_DIRS})
 include_directories(${JWT_CPP_INCLUDE_DIR})
 include_directories(/usr/local/include/laserpants/dotenv-0.9.3)
 
@@ -56,7 +56,7 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 # Link libraries
 target_link_libraries(${PROJECT_NAME} 
     PRIVATE 
-    ${PQXX_LIBRARIES}
+    ${ODBC_LIBRARIES}
     Crow::Crow
     ${SODIUM_LIBRARIES}
     Threads::Threads
@@ -65,7 +65,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # Compiler flags
-target_compile_options(${PROJECT_NAME} PRIVATE ${SODIUM_CFLAGS} ${PQXX_CFLAGS} -Wno-deprecated-declarations)
+target_compile_options(${PROJECT_NAME} PRIVATE ${SODIUM_CFLAGS} -Wno-deprecated-declarations)
 
 # Set output directory
 set_target_properties(${PROJECT_NAME} PROPERTIES

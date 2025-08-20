@@ -5,12 +5,12 @@
 #include <dotenv.h>
 using namespace std;
 
-AuthManager::AuthManager(bool verbose, const string& dbPath)
+AuthManager::AuthManager(bool verbose, const string& server, const string& database, const string& username, const string& password)
     : verbose(verbose) {
     dotenv::init("../.env");
-    db_manager = DatabaseManager::getInstance(dbPath, verbose);
+    db_manager = DatabaseManager::getInstance(server, database, username, password, verbose);
     if (!db_manager || !db_manager->isConnected()) {
-        cerr << "Failed to connect to database at " << dbPath << endl;
+        cerr << "Failed to connect to database at " << server << endl;
     }
 }
 
@@ -28,10 +28,10 @@ bool AuthManager::login(const string& username, const string& password) {
         }
 
         vector<string> params = {username};
-        pqxx::result r = db_manager->executeParamQuery("SELECT * FROM users WHERE username = $1", params);
+        auto result = db_manager->executeParamQuery("SELECT password FROM users WHERE username = ?", params);
 
-        if(!r.empty()) {
-            string hashedPassword = r[0]["password"].as<string>();
+        if(!result.empty()) {
+            string hashedPassword = result[0][0]; // First row, first column (password)
             if (EncryptionManager::verifyPassword(password, hashedPassword)) {
                 return true;
             }
@@ -86,7 +86,7 @@ bool AuthManager::signup(const string& username, const string& password) {
         }
 
         vector<string> params = {username, hashedPassword};
-        return db_manager->executeParamUpdate("INSERT INTO users (username, password) VALUES ($1, $2)", params);
+        return db_manager->executeParamUpdate("INSERT INTO users (username, password) VALUES (?, ?)", params);
     }
     catch (const exception& e) {
         cerr << "Signup error: " << e.what() << endl;
@@ -101,9 +101,9 @@ bool AuthManager::isUserRegistered(const string& username) {
         }
 
         vector<string> params = {username};
-        pqxx::result res = db_manager->executeParamQuery("SELECT COUNT(1) FROM users WHERE username = $1", params);
+        auto result = db_manager->executeParamQuery("SELECT COUNT(1) FROM users WHERE username = ?", params);
 
-        if (!res.empty() && res[0][0].as<int>() > 0) {
+        if (!result.empty() && stoi(result[0][0]) > 0) {
             return true;
         }
 
@@ -124,10 +124,10 @@ vector<string> AuthManager::searchUsers(const string& searchTerm) {
 
         string searchPattern = "%" + searchTerm + "%";
         vector<string> params = {searchPattern};
-        pqxx::result res = db_manager->executeParamQuery("SELECT username FROM users WHERE username ILIKE $1 LIMIT 10", params);
+        auto result = db_manager->executeParamQuery("SELECT TOP 10 username FROM users WHERE username LIKE ?", params);
 
-        for (const auto& row : res) {
-            userList.push_back(row["username"].as<string>());
+        for (const auto& row : result) {
+            userList.push_back(row[0]); // First column (username)
         }
     }
     catch (const exception& e) {
@@ -148,7 +148,7 @@ bool AuthManager::storePublicKey(const string& username, const string& publicKey
         }
 
         vector<string> params = {publicKey, username};
-        bool result = db_manager->executeParamUpdate("UPDATE users SET public_key = $1 WHERE username = $2", params);
+        bool result = db_manager->executeParamUpdate("UPDATE users SET public_key = ? WHERE username = ?", params);
         
         if (verbose && result) {
             cout << "Stored public key for user: " << username << endl;
@@ -169,10 +169,10 @@ string AuthManager::getPublicKey(const string& username) {
         }
 
         vector<string> params = {username};
-        pqxx::result res = db_manager->executeParamQuery("SELECT public_key FROM users WHERE username = $1", params);
+        auto result = db_manager->executeParamQuery("SELECT public_key FROM users WHERE username = ?", params);
 
-        if (!res.empty() && !res[0]["public_key"].is_null()) {
-            return res[0]["public_key"].as<string>();
+        if (!result.empty() && !result[0][0].empty()) {
+            return result[0][0]; // First row, first column (public_key)
         }
 
         return "";

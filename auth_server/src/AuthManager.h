@@ -11,7 +11,7 @@ private:
     bool verbose;
 
 public:
-    explicit AuthManager(bool verbose, const std::string& dbPath);
+    explicit AuthManager(bool verbose, const std::string& server, const std::string& database, const std::string& username, const std::string& password);
     ~AuthManager();
 
     bool login(const std::string& username, const std::string& password);

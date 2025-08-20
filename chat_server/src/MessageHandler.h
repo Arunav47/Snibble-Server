@@ -16,14 +16,14 @@ private:
     ClientHandler* client_handler = nullptr;
     DatabaseManager* db_manager = nullptr;
     
-    void connectToDatabase(const std::string& dbPath);
+    void connectToDatabase(const std::string& server, const std::string& database, const std::string& username, const std::string& password);
     void storeMessageInDatabase(const std::string& sender, const std::string& recipient, const std::string& message, bool delivered = true);
     void deliverOfflineMessages(const std::string& username, int client_fd);
     void getContactedUsers(const std::string& username, int client_fd);
     void getChatHistory(const std::string& username, const std::string& otherUser, int client_fd);
 
 public:
-    MessageHandler(SocketServer* server, ClientHandler* handler = nullptr, const std::string& dbPath = "");
+    MessageHandler(SocketServer* server, ClientHandler* handler = nullptr);
     ~MessageHandler();
     void storeAndForwardMessage(const int client_fd);
     void deliverOfflineMessagesToUser(const std::string& username, int client_fd);

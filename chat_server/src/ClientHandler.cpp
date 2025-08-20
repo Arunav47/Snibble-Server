@@ -54,7 +54,7 @@ void ClientHandler::clientConnectionHandler() {
         server_ref->client_map[name] = client_fd;
         server_ref->client_names[client_fd] = name;
         
-        MessageHandler* offlineMessageHandler = new MessageHandler(server_ref, this, server_ref->dbPath);
+        MessageHandler* offlineMessageHandler = new MessageHandler(server_ref, this);
         offlineMessageHandler->deliverOfflineMessagesToUser(name, client_fd);
         delete offlineMessageHandler;
         
@@ -62,7 +62,7 @@ void ClientHandler::clientConnectionHandler() {
         ThreadArgs* args = new ThreadArgs{server_ref, this, client_fd};
         pthread_create(&thread_id, nullptr, [](void* arg)->void* {
             ThreadArgs* args = static_cast<ThreadArgs*>(arg);
-            MessageHandler* msgHandler = new MessageHandler(args->server, args->client_handler, args->server->dbPath);
+            MessageHandler* msgHandler = new MessageHandler(args->server, args->client_handler);
             msgHandler->storeAndForwardMessage(args->client_fd);
             delete msgHandler;
             delete args;

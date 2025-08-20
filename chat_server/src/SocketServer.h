@@ -16,7 +16,7 @@ class SocketServer {
     friend class ClientHandler;
     friend class MessageHandler;
 private:
-    bool debugMode = false;
+    bool debugMode = true;
     std::string HOST;
     int PORT;
     int MAX_CLIENTS = 100;
@@ -30,9 +30,12 @@ private:
     std::map<std::string, bool> isOnline;
     pthread_mutex_t mutex;
     volatile bool running = true;
-    std::string dbPath;
+    std::string SERVER;
+    std::string DATABASE;
+    std::string USERNAME;
+    std::string PASSWORD;
 public:
-    SocketServer(const std::string& host, const int port, const std::string& dbPath);
+    SocketServer(const std::string& host, const int port, const std::string& server, const std::string& database, const std::string& username, const std::string& password);
     ~SocketServer();
 
     void start();

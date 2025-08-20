@@ -26,13 +26,16 @@ string createJWTToken(const string& username, const string& JWT_SECRET) {
 
 int main() {
     dotenv::init("../.env");
-    string dbPath = dotenv::getenv("DB_PATH", "testdb");
+    string SERVER = dotenv::getenv("AZURE_SQL_SERVER");
+    string DATABASE = dotenv::getenv("AZURE_SQL_DATABASE");
+    string USERNAME = dotenv::getenv("AZURE_SQL_USERNAME");
+    string PASSWORD = dotenv::getenv("AZURE_SQL_PASSWORD");
     bool verbose = dotenv::getenv("VERBOSE") == "true";
     int port = stoi(dotenv::getenv("PORT", "8000"));
     string JWT_SECRET = dotenv::getenv("JWT_SECRET", "your-super-secret-key-change-this-in-production");
 
     crow::SimpleApp app;
-    AuthManager authManager(verbose, dbPath);
+    AuthManager authManager(verbose, SERVER, DATABASE, USERNAME, PASSWORD);
 
     CROW_ROUTE(app, "/login").methods(crow::HTTPMethod::POST)([&authManager, &JWT_SECRET](const crow::request& req) {
         auto json = crow::json::load(req.body);

@@ -9,8 +9,8 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(laserpants_dotenv REQUIRED)
 
-# Find libpqxx (PostgreSQL C++ library)
-pkg_check_modules(PQXX REQUIRED libpqxx)
+# Find ODBC for SQL Server connectivity
+find_package(ODBC REQUIRED)
 
 # Find hiredis (still needed for user presence tracking)
 pkg_check_modules(HIREDIS REQUIRED hiredis)
@@ -19,7 +19,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../shared/include)
 include_directories(/usr/local/include/laserpants/dotenv-0.9.3)
 include_directories(${HIREDIS_INCLUDE_DIRS})
-include_directories(${PQXX_INCLUDE_DIRS})
+include_directories(${ODBC_INCLUDE_DIRS})
 
 set(SOURCES
     main.cpp
@@ -42,13 +42,12 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE 
     Threads::Threads
     ${HIREDIS_LIBRARIES}
-    ${PQXX_LIBRARIES}
+    ${ODBC_LIBRARIES}
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
     -Wall -Wextra -pedantic -pthread -Wno-deprecated-declarations
     ${HIREDIS_CFLAGS_OTHER}
-    ${PQXX_CFLAGS}
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

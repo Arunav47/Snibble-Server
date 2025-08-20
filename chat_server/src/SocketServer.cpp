@@ -5,8 +5,8 @@
 using namespace std;
 
 
-SocketServer::SocketServer(const std::string& host, int port, const std::string& dbPath) 
-    : HOST(host), PORT(port), dbPath(dbPath), server_fd(-1) {
+SocketServer::SocketServer(const string& host, int port, const string& server, const string& database, const string& username, const string& password) 
+    : HOST(host), PORT(port), SERVER(server), DATABASE(database), USERNAME(username), PASSWORD(password), server_fd(-1) {
     pthread_mutex_init(&mutex, nullptr);
 }
 

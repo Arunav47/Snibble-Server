@@ -1,25 +1,41 @@
 #include "DatabaseManager.h"
 #include <iostream>
 #include <dotenv.h>
+#include <cstring>
 
 using namespace std;
 
 unique_ptr<DatabaseManager> DatabaseManager::instance = nullptr;
 mutex DatabaseManager::mutex_;
 
-DatabaseManager::DatabaseManager(const string& dbPath, bool verbose) 
-    : dbPath(dbPath), verbose(verbose), dbconn(nullptr) {
-    dotenv::init("../.env");
+DatabaseManager::DatabaseManager(const string& server, const string& database, const string& username, const string& password, bool verbose) 
+    : verbose(verbose), hEnv(SQL_NULL_HENV), hDbc(SQL_NULL_HDBC), hStmt(SQL_NULL_HSTMT) {
+    // Build Azure SQL connection string with proper Azure-specific parameters
+    connectionString = "DRIVER={ODBC Driver 18 for SQL Server};"
+                      "SERVER=tcp:" + server + ",1433;"
+                      "DATABASE=" + database + ";"
+                      "UID=" + username + ";"
+                      "PWD=" + password + ";"
+                      "Encrypt=yes;"
+                      "TrustServerCertificate=no;"
+                      "Connection Timeout=30;"
+                      "Authentication=SqlPassword;"
+                      "LoginTimeout=30;";
+    
+    if (verbose) {
+        cout << "Connection string built for Azure SQL Database" << endl;
+        // Don't log the actual connection string as it contains password
+    }
 }
 
 DatabaseManager::~DatabaseManager() {
     disconnectFromDatabase();
 }
 
-DatabaseManager* DatabaseManager::getInstance(const string& dbPath, bool verbose) {
+DatabaseManager* DatabaseManager::getInstance(const string& server, const string& database, const string& username, const string& password, bool verbose) {
     lock_guard<mutex> lock(mutex_);
     if (instance == nullptr) {
-        instance = unique_ptr<DatabaseManager>(new DatabaseManager(dbPath, verbose));
+        instance = unique_ptr<DatabaseManager>(new DatabaseManager(server, database, username, password, verbose));
         instance->connectToDatabase();
         instance->initializeTables();
     }
@@ -28,19 +44,66 @@ DatabaseManager* DatabaseManager::getInstance(const string& dbPath, bool verbose
 
 bool DatabaseManager::connectToDatabase() {
     try {
-        if (dbconn) {
-            delete dbconn;
+        // Allocate environment handle
+        lock_guard<mutex> lock(db_mutex);
+        if (SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &hEnv) != SQL_SUCCESS) {
+            if(verbose) {
+                cerr << "Failed to allocate SQL environment handle." << endl;
+            }
+            return false;
         }
         
-        dbconn = new pqxx::connection(dbPath);
-        if (dbconn->is_open() && verbose) {
-            cout << "Connected to database successfully." << endl;
+        // Set ODBC version
+        if (SQLSetEnvAttr(hEnv, SQL_ATTR_ODBC_VERSION, (void*)SQL_OV_ODBC3, 0) != SQL_SUCCESS) {
+            if(verbose) {
+                cerr << "Failed to set ODBC version." << endl;
+            }
+            return false;
         }
-        return dbconn->is_open();
-    }
-    catch (const pqxx::sql_error& e) {
-        cerr << "SQL error: " << e.what() << endl;
-        return false;
+        
+        // Allocate connection handle
+        if (SQLAllocHandle(SQL_HANDLE_DBC, hEnv, &hDbc) != SQL_SUCCESS) {
+            if(verbose) {
+                cerr << "Failed to allocate connection handle." << endl;
+            }
+            return false;
+        }
+        
+        if (verbose) {
+            cout << "Attempting to connect with connection string: " << endl;
+        }
+        
+        // Connect to Azure SQL Database
+        SQLCHAR outConnectionString[1024];
+        SQLSMALLINT outConnectionStringLength;
+        SQLRETURN ret = SQLDriverConnect(hDbc, nullptr, (SQLCHAR*)connectionString.c_str(), 
+                                        SQL_NTS, outConnectionString, sizeof(outConnectionString), 
+                                        &outConnectionStringLength, SQL_DRIVER_COMPLETE);
+        
+        if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
+            if (verbose) {
+                cout << "Connected to Azure SQL Database successfully" << endl;
+            }
+            return true;
+        } else {
+            if(verbose) {
+                cerr << "Failed to connect to Azure SQL Database." << endl;
+                
+                // Get detailed error information
+                SQLCHAR sqlState[6];
+                SQLCHAR errorMessage[SQL_MAX_MESSAGE_LENGTH];
+                SQLINTEGER nativeError;
+                SQLSMALLINT messageLength;
+                
+                if (SQLGetDiagRec(SQL_HANDLE_DBC, hDbc, 1, sqlState, &nativeError, 
+                                 errorMessage, sizeof(errorMessage), &messageLength) == SQL_SUCCESS) {
+                    cerr << "SQL State: " << sqlState << endl;
+                    cerr << "Native Error: " << nativeError << endl;
+                    cerr << "Error Message: " << errorMessage << endl;
+                }
+            }
+            return false;
+        }
     }
     catch (const exception& e) {
         cerr << "Database connection error: " << e.what() << endl;
@@ -51,14 +114,22 @@ bool DatabaseManager::connectToDatabase() {
 void DatabaseManager::disconnectFromDatabase() {
     lock_guard<mutex> lock(db_mutex);
     try {
-        if (dbconn && dbconn->is_open()) {
-            dbconn->close();
-            if (verbose) {
-                cout << "Disconnected from database successfully." << endl;
-            }
+        if (hStmt != SQL_NULL_HSTMT) {
+            SQLFreeHandle(SQL_HANDLE_STMT, hStmt);
+            hStmt = SQL_NULL_HSTMT;
         }
-        delete dbconn;
-        dbconn = nullptr;
+        if (hDbc != SQL_NULL_HDBC) {
+            SQLDisconnect(hDbc);
+            SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
+            hDbc = SQL_NULL_HDBC;
+        }
+        if (hEnv != SQL_NULL_HENV) {
+            SQLFreeHandle(SQL_HANDLE_ENV, hEnv);
+            hEnv = SQL_NULL_HENV;
+        }
+        if (verbose) {
+            cout << "Disconnected from database successfully." << endl;
+        }
     }
     catch (const exception& e) {
         cerr << "Error during disconnect: " << e.what() << endl;
@@ -66,19 +137,67 @@ void DatabaseManager::disconnectFromDatabase() {
 }
 
 bool DatabaseManager::isConnected() const {
-    return dbconn && dbconn->is_open();
+    if (hDbc == SQL_NULL_HDBC) return false;
+    
+    SQLUINTEGER connectionDead;
+    SQLRETURN ret = SQLGetConnectAttr(hDbc, SQL_ATTR_CONNECTION_DEAD, &connectionDead, 0, nullptr);
+    return (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) && (connectionDead == SQL_CD_FALSE);
 }
 
-pqxx::result DatabaseManager::executeQuery(const string& query) {
+vector<vector<string>> DatabaseManager::executeQuery(const string& query) {
     lock_guard<mutex> lock(db_mutex);
+    vector<vector<string>> results;
+    
     try {
         if (!isConnected()) {
             throw runtime_error("Database connection is not open.");
         }
-        pqxx::work txn(*dbconn);
-        pqxx::result result = txn.exec(query);
-        txn.commit();
-        return result;
+        
+        SQLHSTMT stmt;
+        if (SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &stmt) != SQL_SUCCESS) {
+            throw runtime_error("Failed to allocate statement handle.");
+        }
+        
+        if (SQLExecDirect(stmt, (SQLCHAR*)query.c_str(), SQL_NTS) != SQL_SUCCESS) {
+            // Get detailed error information
+            SQLCHAR sqlState[6];
+            SQLCHAR errorMessage[SQL_MAX_MESSAGE_LENGTH];
+            SQLINTEGER nativeError;
+            SQLSMALLINT messageLength;
+            
+            if (SQLGetDiagRec(SQL_HANDLE_STMT, stmt, 1, sqlState, &nativeError, 
+                             errorMessage, sizeof(errorMessage), &messageLength) == SQL_SUCCESS) {
+                cerr << "SQL Query Error - State: " << sqlState << ", Message: " << errorMessage << endl;
+            }
+            
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            throw runtime_error("Failed to execute query: " + query);
+        }
+        
+        SQLSMALLINT columnCount;
+        SQLNumResultCols(stmt, &columnCount);
+        
+        SQLCHAR buffer[1024];
+        SQLLEN indicator;
+        
+        while (SQLFetch(stmt) == SQL_SUCCESS) {
+            vector<string> row;
+            for (SQLSMALLINT i = 1; i <= columnCount; i++) {
+                if (SQLGetData(stmt, i, SQL_C_CHAR, buffer, sizeof(buffer), &indicator) == SQL_SUCCESS) {
+                    if (indicator == SQL_NULL_DATA) {
+                        row.push_back("");
+                    } else {
+                        row.push_back(string((char*)buffer));
+                    }
+                } else {
+                    row.push_back("");
+                }
+            }
+            results.push_back(row);
+        }
+        
+        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+        return results;
     }
     catch (const exception& e) {
         cerr << "Query execution error: " << e.what() << endl;
@@ -86,40 +205,75 @@ pqxx::result DatabaseManager::executeQuery(const string& query) {
     }
 }
 
-pqxx::result DatabaseManager::executeParamQuery(const string& query, const vector<string>& params) {
+vector<vector<string>> DatabaseManager::executeParamQuery(const string& query, const vector<string>& params) {
     lock_guard<mutex> lock(db_mutex);
+    vector<vector<string>> results;
+    
     try {
         if (!isConnected()) {
             throw runtime_error("Database connection is not open.");
         }
-        pqxx::work txn(*dbconn);
-        pqxx::result result;
         
-        switch (params.size()) {
-            case 1:
-                result = txn.exec_params(query, params[0]);
-                break;
-            case 2:
-                result = txn.exec_params(query, params[0], params[1]);
-                break;
-            case 3:
-                result = txn.exec_params(query, params[0], params[1], params[2]);
-                break;
-            case 4:
-                result = txn.exec_params(query, params[0], params[1], params[2], params[3]);
-                break;
-            case 5:
-                result = txn.exec_params(query, params[0], params[1], params[2], params[3], params[4]);
-                break;
-            case 6:
-                result = txn.exec_params(query, params[0], params[1], params[2], params[3], params[4], params[5]);
-                break;
-            default:
-                throw runtime_error("Too many parameters for query");
+        SQLHSTMT stmt;
+        if (SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &stmt) != SQL_SUCCESS) {
+            throw runtime_error("Failed to allocate statement handle.");
         }
         
-        txn.commit();
-        return result;
+        if (SQLPrepare(stmt, (SQLCHAR*)query.c_str(), SQL_NTS) != SQL_SUCCESS) {
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            throw runtime_error("Failed to prepare query.");
+        }
+        
+        // Bind parameters
+        for (size_t i = 0; i < params.size(); i++) {
+            if (SQLBindParameter(stmt, i + 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR,
+                               params[i].length(), 0, (SQLCHAR*)params[i].c_str(),
+                               params[i].length(), nullptr) != SQL_SUCCESS) {
+                SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+                throw runtime_error("Failed to bind parameter " + to_string(i + 1));
+            }
+        }
+        
+        if (SQLExecute(stmt) != SQL_SUCCESS) {
+            // Get detailed error information
+            SQLCHAR sqlState[6];
+            SQLCHAR errorMessage[SQL_MAX_MESSAGE_LENGTH];
+            SQLINTEGER nativeError;
+            SQLSMALLINT messageLength;
+            
+            if (SQLGetDiagRec(SQL_HANDLE_STMT, stmt, 1, sqlState, &nativeError, 
+                             errorMessage, sizeof(errorMessage), &messageLength) == SQL_SUCCESS) {
+                cerr << "SQL Parameterized Query Error - State: " << sqlState << ", Message: " << errorMessage << endl;
+            }
+            
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            throw runtime_error("Failed to execute parameterized query: " + query);
+        }
+        
+        SQLSMALLINT columnCount;
+        SQLNumResultCols(stmt, &columnCount);
+        
+        SQLCHAR buffer[1024];
+        SQLLEN indicator;
+        
+        while (SQLFetch(stmt) == SQL_SUCCESS) {
+            vector<string> row;
+            for (SQLSMALLINT i = 1; i <= columnCount; i++) {
+                if (SQLGetData(stmt, i, SQL_C_CHAR, buffer, sizeof(buffer), &indicator) == SQL_SUCCESS) {
+                    if (indicator == SQL_NULL_DATA) {
+                        row.push_back("");
+                    } else {
+                        row.push_back(string((char*)buffer));
+                    }
+                } else {
+                    row.push_back("");
+                }
+            }
+            results.push_back(row);
+        }
+        
+        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+        return results;
     }
     catch (const exception& e) {
         cerr << "Parameterized query execution error: " << e.what() << endl;
@@ -151,39 +305,53 @@ bool DatabaseManager::executeParamUpdate(const string& query, const vector<strin
 
 bool DatabaseManager::initializeTables() {
     try {
+        // Convert PostgreSQL syntax to SQL Server syntax
         string createUsersTable = R"(
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='users' AND xtype='U')
+            CREATE TABLE users (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                username NVARCHAR(255) UNIQUE NOT NULL,
+                password NVARCHAR(255) NOT NULL,
+                public_key NVARCHAR(MAX) NULL,
+                created_at DATETIME2 DEFAULT GETDATE()
             )
         )";
         
         string createMessagesTable = R"(
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                sender VARCHAR(255) NOT NULL,
-                recipient VARCHAR(255) NOT NULL,
-                message_content TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                conversation_id VARCHAR(511) NOT NULL,
-                delivered BOOLEAN DEFAULT true
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='messages' AND xtype='U')
+            CREATE TABLE messages (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                sender NVARCHAR(255) NOT NULL,
+                recipient NVARCHAR(255) NOT NULL,
+                message_content NTEXT NOT NULL,
+                timestamp DATETIME2 DEFAULT GETDATE(),
+                conversation_id NVARCHAR(511) NOT NULL,
+                delivered BIT DEFAULT 1
             )
         )";
         
         string createConversationIndex = R"(
-            CREATE INDEX IF NOT EXISTS idx_conversation_id ON messages(conversation_id);
-            CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_recipient_delivered ON messages(recipient, delivered);
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_conversation_id')
+                CREATE INDEX idx_conversation_id ON messages(conversation_id);
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_timestamp')
+                CREATE INDEX idx_timestamp ON messages(timestamp);
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_recipient_delivered')
+                CREATE INDEX idx_recipient_delivered ON messages(recipient, delivered);
+        )";
+        
+        string addPublicKeyColumn = R"(
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('users') AND name = 'public_key')
+                ALTER TABLE users ADD public_key NVARCHAR(MAX) NULL;
         )";
         
         string addDeliveredColumn = R"(
-            ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered BOOLEAN DEFAULT true;
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('messages') AND name = 'delivered')
+                ALTER TABLE messages ADD delivered BIT DEFAULT 1;
         )";
         
         executeUpdate(createUsersTable);
         executeUpdate(createMessagesTable);
+        executeUpdate(addPublicKeyColumn);
         executeUpdate(addDeliveredColumn);
         executeUpdate(createConversationIndex);
         
@@ -198,6 +366,6 @@ bool DatabaseManager::initializeTables() {
     }
 }
 
-pqxx::connection* DatabaseManager::getConnection() {
-    return dbconn;
+SQLHDBC DatabaseManager::getConnection() {
+    return hDbc;
 }

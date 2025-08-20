@@ -32,7 +32,10 @@ int main() {
         cerr << "Invalid SOCKET_PORT value: " << port_str << ", using default 8081" << endl;
         port = 8081;
     }
-    string dbPath = dotenv::getenv("DB_PATH", "testdb");
+    string SERVER = dotenv::getenv("AZURE_SQL_SERVER", "localhost");
+    string DATABASE = dotenv::getenv("AZURE_SQL_DATABASE", "snibble_db");
+    string USERNAME = dotenv::getenv("AZURE_SQL_USERNAME", "sa");
+    string PASSWORD = dotenv::getenv("AZURE_SQL_PASSWORD", "your_password_here");
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
     
@@ -40,7 +43,7 @@ int main() {
         if (verbose) {
             cout << host << ":" << port << endl;
         }
-        server = new SocketServer(host, port, dbPath);
+        server = new SocketServer(host, port, SERVER, DATABASE, USERNAME, PASSWORD);
         
         if (verbose) {
             cout << "[+] Starting Cryptalk Chat Server...\n";

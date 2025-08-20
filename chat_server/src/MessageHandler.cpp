@@ -4,9 +4,9 @@
 #include <chrono>
 using namespace std;
 
-MessageHandler::MessageHandler(SocketServer* server, ClientHandler* handler, const string& dbPath) 
+MessageHandler::MessageHandler(SocketServer* server, ClientHandler* handler) 
     : server_ref(server), client_handler(handler) {
-    connectToDatabase(dbPath);
+    connectToDatabase(server->SERVER, server->DATABASE, server->USERNAME, server->PASSWORD);
 }
 
 MessageHandler::~MessageHandler() {
@@ -82,8 +82,8 @@ void MessageHandler::storeAndForwardMessage(const int client_fd) {
     
 }
 
-void MessageHandler::connectToDatabase(const string& dbPath) {
-    db_manager = DatabaseManager::getInstance(dbPath, true);
+void MessageHandler::connectToDatabase(const string& server, const string& database, const string& username, const string& password) {
+    db_manager = DatabaseManager::getInstance(server, database, username, password, true);
     if (!db_manager || !db_manager->isConnected()) {
         cout << "Failed to connect to database for message storage" << endl;
     } else {
@@ -128,8 +128,8 @@ void MessageHandler::deliverOfflineMessages(const string& username, int client_f
     try {
         // Retrieve all undelivered messages for this user
         vector<string> params = {username};
-        pqxx::result result = db_manager->executeParamQuery(
-            "SELECT sender, message_content, timestamp FROM messages WHERE recipient = $1 AND delivered = false ORDER BY timestamp ASC", 
+        auto result = db_manager->executeParamQuery(
+            "SELECT sender, message_content, timestamp FROM messages WHERE recipient = ? AND delivered = 0 ORDER BY timestamp ASC", 
             params
         );
         
@@ -139,9 +139,9 @@ void MessageHandler::deliverOfflineMessages(const string& username, int client_f
             
             // Send each offline message
             for (const auto& row : result) {
-                string sender = row["sender"].c_str();
-                string message_content = row["message_content"].c_str();
-                string timestamp = row["timestamp"].c_str();
+                string sender = row[0];           // sender column
+                string message_content = row[1];  // message_content column
+                string timestamp = row[2];        // timestamp column
                 
                 string offline_msg = "[OFFLINE] " + sender + " (" + timestamp + "): " + message_content + "\n";
                 send(client_fd, offline_msg.c_str(), offline_msg.length(), 0);
@@ -176,17 +176,17 @@ void MessageHandler::getContactedUsers(const string& username, int client_fd) {
     }
     
     try {
-        vector<string> params = {username, username};
-        pqxx::result result = db_manager->executeParamQuery(
+        vector<string> params = {username, username, username, username, username, username};
+        auto result = db_manager->executeParamQuery(
             "SELECT DISTINCT CASE "
-            "WHEN sender = $1 THEN recipient "
-            "WHEN recipient = $2 THEN sender "
+            "WHEN sender = ? THEN recipient "
+            "WHEN recipient = ? THEN sender "
             "END as contacted_user "
             "FROM messages "
-            "WHERE (sender = $1 OR recipient = $2) "
+            "WHERE (sender = ? OR recipient = ?) "
             "AND CASE "
-            "WHEN sender = $1 THEN recipient "
-            "WHEN recipient = $2 THEN sender "
+            "WHEN sender = ? THEN recipient "
+            "WHEN recipient = ? THEN sender "
             "END IS NOT NULL "
             "ORDER BY contacted_user", 
             params
@@ -195,7 +195,7 @@ void MessageHandler::getContactedUsers(const string& username, int client_fd) {
         if (result.size() > 0) {
             string contacted_list = "CONTACTED_USERS:";
             for (const auto& row : result) {
-                string contacted_user = row["contacted_user"].c_str();
+                string contacted_user = row[0]; // contacted_user column
                 if (!contacted_user.empty()) {
                     contacted_list += contacted_user + ",";
                 }
@@ -232,10 +232,10 @@ void MessageHandler::getChatHistory(const string& username, const string& otherU
     try {
         // Get all messages between these two users, ordered by timestamp
         vector<string> params = {username, otherUser, otherUser, username};
-        pqxx::result result = db_manager->executeParamQuery(
+        auto result = db_manager->executeParamQuery(
             "SELECT sender, recipient, message_content, timestamp, delivered "
             "FROM messages "
-            "WHERE (sender = $1 AND recipient = $2) OR (sender = $3 AND recipient = $4) "
+            "WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?) "
             "ORDER BY timestamp ASC", 
             params
         );
@@ -246,11 +246,11 @@ void MessageHandler::getChatHistory(const string& username, const string& otherU
             
             // Send each message in the conversation
             for (const auto& row : result) {
-                string sender = row["sender"].c_str();
-                string recipient = row["recipient"].c_str();
-                string message_content = row["message_content"].c_str();
-                string timestamp = row["timestamp"].c_str();
-                bool delivered = row["delivered"].as<bool>();
+                string sender = row[0];           // sender column
+                string recipient = row[1];        // recipient column
+                string message_content = row[2];  // message_content column
+                string timestamp = row[3];        // timestamp column
+                bool delivered = (row[4] == "1" || row[4] == "true"); // delivered column
                 
                 // Format: CHAT_HISTORY_MSG:sender:recipient:message:timestamp:delivered
                 string msg_line = "CHAT_HISTORY_MSG:" + sender + ":" + recipient + ":" + 

@@ -8,11 +8,31 @@ using namespace std;
 SocketServer::SocketServer(const string& host, int port, const string& server, const string& database, const string& username, const string& password) 
     : HOST(host), PORT(port), SERVER(server), DATABASE(database), USERNAME(username), PASSWORD(password), server_fd(-1) {
     pthread_mutex_init(&mutex, nullptr);
+    redis_context = redisConnect("127.0.0.1", 6379);
+    if (redis_context == nullptr || redis_context->err) {
+        if (redis_context) {
+            if (debugMode) {
+                cerr << "Redis connection error: " << redis_context->errstr << endl;
+            }
+            redisFree(redis_context);
+        } else {
+            if (debugMode) {
+                cerr << "Redis connection error: Can't allocate redis context" << endl;
+            }
+        }
+        redis_context = nullptr;
+    } else if (debugMode) {
+        cout << "[+] Connected to Redis server successfully" << endl;
+    }
 }
 
 SocketServer::~SocketServer() {
     if(running) {
         stop();
+    }
+    if (redis_context) {
+        redisFree(redis_context);
+        redis_context = nullptr;
     }
 }
 
@@ -89,4 +109,60 @@ void SocketServer::stop() {
     if (debugMode) {
         printf("[+] Server shut down cleanly\n");
     }
+}
+
+void SocketServer::sendOnlineUsersList(int client_fd) {
+    pthread_mutex_lock(&mutex);
+    std::string online_users = "ONLINE_USERS:";
+    for (const auto& pair : isOnline) {
+        if (pair.second) {
+            online_users += pair.first + ",";
+        }
+    }
+    if (online_users.back() == ',') {
+        online_users.pop_back();
+    }
+    send(client_fd, online_users.c_str(), online_users.length(), 0);
+    pthread_mutex_unlock(&mutex);
+}
+
+void SocketServer::broadcastUserStatus(const std::string& username, bool online) {
+    pthread_mutex_lock(&mutex);
+    isOnline[username] = online;
+    
+    if (redis_context) {
+        // Publish the status change to Redis
+        // Channel name is the username, message is either "joined" or "left"
+        redisReply* reply = (redisReply*)redisCommand(redis_context, 
+            "PUBLISH %s %s", 
+            username.c_str(), 
+            online ? "joined" : "left"
+        );
+        
+        if (reply) {
+            if (debugMode && reply->type == REDIS_REPLY_ERROR) {
+                cerr << "Redis publish error: " << reply->str << endl;
+            }
+            freeReplyObject(reply);
+        }
+        
+        // Also maintain a Redis set of online users
+        if (online) {
+            reply = (redisReply*)redisCommand(redis_context, 
+                "SADD online_users %s", 
+                username.c_str()
+            );
+        } else {
+            reply = (redisReply*)redisCommand(redis_context, 
+                "SREM online_users %s", 
+                username.c_str()
+            );
+        }
+        
+        if (reply) {
+            freeReplyObject(reply);
+        }
+    }
+    
+    pthread_mutex_unlock(&mutex);
 }

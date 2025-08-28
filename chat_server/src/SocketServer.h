@@ -21,6 +21,7 @@ private:
     int PORT;
     int MAX_CLIENTS = 100;
     int server_fd;
+    redisContext* redis_context = nullptr;
     struct sockaddr_in server_addr, client_addr;
     std::map<int, pthread_t> client_threads;
     pthread_t accept_client_thread, read_msg_thread, sub_thread;
@@ -40,6 +41,8 @@ public:
 
     void start();
     void stop();
+    void sendOnlineUsersList(int client_fd);
+    void broadcastUserStatus(const std::string& username, bool isOnline);
 };
 
 #endif
